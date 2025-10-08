@@ -1,0 +1,8 @@
+setuptools>=69.0.0
+numpy>=1.26.0
+sentence-transformers==2.2.2
+transformers==4.34.0
+torch>=2.2.0
+faiss-cpu>=1.8.0
+click==8.1.7
+tqdm==4.66.1
