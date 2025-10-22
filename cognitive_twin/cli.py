@@ -3,6 +3,7 @@
 import click
 from pathlib import Path
 from .core import CognitiveTwin
+from .api import create_app
 
 @click.group()
 def cli():
@@ -38,6 +39,15 @@ def connections(notes_dir: Path, k: int, threshold: float):
 
     for i, summary in enumerate(summaries, 1):
         click.echo(f"{i}. {summary}\n")
+
+@cli.command()
+@click.option('--host', default='127.0.0.1', show_default=True)
+@click.option('--port', default=8000, show_default=True, type=int)
+def serve(host: str, port: int):
+    """Run a local API server for GUI/Obsidian integration."""
+    import uvicorn
+    app = create_app()
+    uvicorn.run(app, host=host, port=port)
 
 if __name__ == '__main__':
     cli()

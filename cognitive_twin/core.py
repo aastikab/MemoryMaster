@@ -1,4 +1,10 @@
-"""Core implementation of the Cognitive Twin using local models."""
+"""Core implementation of the Cognitive Twin using local models.
+
+Enhancements:
+- Uses cached embeddings via NoteEmbedder
+- Adds citation-enforced summarization with optional NLI verification
+- Prepares connections suitable for GUI/API consumption
+"""
 
 from pathlib import Path
 from typing import List, Tuple
@@ -7,21 +13,25 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import faiss
+from .embedder import NoteEmbedder
+from .summarizer import NoteSummarizer
+from .vector_store import VectorStore
 
 class CognitiveTwin:
     def __init__(self):
         """Initialize models and vector store."""
-        # Initialize SentenceTransformer for embeddings
-        self.embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        # Initialize SentenceTransformer for embeddings (via cached wrapper)
+        self.embedder = NoteEmbedder('all-MiniLM-L6-v2')
         
         # Initialize BART-MNLI for text classification/similarity
         self.tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-mnli")
         self.classifier = AutoModelForSequenceClassification.from_pretrained("facebook/bart-large-mnli")
         
         # Initialize FAISS index
-        self.dimension = self.embedder.get_sentence_embedding_dimension()
+        self.dimension = self.embedder.embedding_dim
         self.index = faiss.IndexFlatL2(self.dimension)
         self.notes = []
+        self.summarizer = NoteSummarizer()
         
         # Move models to GPU if available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,12 +90,7 @@ class CognitiveTwin:
         print("🧠 Computing embeddings...")
 
         # Compute embeddings and add to index
-        embeddings = self.embedder.encode(
-            self.notes,
-            batch_size=32,
-            show_progress_bar=True,
-            normalize_embeddings=True
-        )
+        embeddings = self.embedder.embed_texts(self.notes)
         print(f"📐 Embeddings shape: {embeddings.shape}")
         self.index.add(np.array(embeddings, dtype=np.float32))
         print(f"🎯 Index size: {self.index.ntotal}")
@@ -104,12 +109,7 @@ class CognitiveTwin:
 
         # Get embeddings for all notes at once
         print("🧠 Computing embeddings for similarity search...")
-        embeddings = self.embedder.encode(
-            self.notes,
-            batch_size=32,
-            show_progress_bar=True,
-            normalize_embeddings=True
-        )
+        embeddings = self.embedder.embed_texts(self.notes)
         print(f"📐 Embeddings shape: {embeddings.shape}")
 
         for i, note in enumerate(self.notes):
@@ -147,10 +147,8 @@ class CognitiveTwin:
                 # Only include if similarity is high enough
                 if similarity >= threshold:
                     print(f"✅ High similarity found! ({similarity:.4f})")
-                    # Create a summary highlighting the connection
-                    summary = f"Connection found (similarity: {similarity:.2f}):\n"
-                    summary += f"Note 1: {self.notes[i][:100]}...\n"
-                    summary += f"Note 2: {self.notes[j][:100]}..."
+                    # Create a grounded summary highlighting the connection
+                    summary = self.summarizer.summarize_with_citations(self.notes[i], self.notes[j], verify=True)
                     summaries.append(summary)
                 else:
                     print(f"❌ Low similarity: {similarity:.4f} (threshold: {threshold})")
