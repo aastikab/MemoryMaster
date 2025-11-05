@@ -1,12 +1,12 @@
 """Text summarization module using BART with citation enforcement and optional NLI verification."""
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import re
 from transformers import BartForConditionalGeneration, BartTokenizer, AutoTokenizer, AutoModelForSequenceClassification
 import torch
 
 class NoteSummarizer:
-    def __init__(self, model_name: str = 'facebook/bart-large-cnn', nli_model: str | None = 'facebook/bart-large-mnli'):
+    def __init__(self, model_name: str = 'facebook/bart-large-cnn', nli_model: Optional[str] = 'facebook/bart-large-mnli'):
         """Initialize the summarizer with specified model and optional NLI verifier."""
         self.tokenizer = BartTokenizer.from_pretrained(model_name)
         self.model = BartForConditionalGeneration.from_pretrained(model_name)

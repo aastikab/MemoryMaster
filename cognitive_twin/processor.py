@@ -42,3 +42,4 @@ class NoteProcessor:
             
         # Filter out chunks that are too small
         return [chunk for chunk in chunks if len(chunk) >= self.min_chunk_size]
+
