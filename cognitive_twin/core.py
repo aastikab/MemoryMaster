@@ -7,12 +7,13 @@ Enhancements:
 """
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import faiss
+from tqdm import tqdm
 from .embedder import NoteEmbedder
 from .summarizer import NoteSummarizer
 from .vector_store import VectorStore
@@ -160,3 +161,78 @@ class CognitiveTwin:
                     
         print(f"📊 Total connections found: {len(summaries)}")
         return summaries
+    
+    def process_notes_batch(self, notes: List[str], batch_size: int = 10) -> int:
+        """Process a batch of notes (list of strings).
+        
+        Args:
+            notes: List of note content strings
+            batch_size: Number of notes to process in each batch
+        
+        Returns:
+            Number of notes processed
+        """
+        if not notes:
+            return 0
+        
+        print(f"🔄 Processing {len(notes)} notes in batches of {batch_size}...")
+        
+        # Add notes to list
+        start_idx = len(self.notes)
+        self.notes.extend(notes)
+        
+        # Compute embeddings in batches
+        print("🧠 Computing embeddings...")
+        embeddings = self.embedder.embed_texts(notes)
+        
+        # Add to FAISS index
+        self.index.add(np.array(embeddings, dtype=np.float32))
+        print(f"✅ Processed {len(notes)} notes. Total notes: {len(self.notes)}")
+        
+        return len(notes)
+    
+    def analyze_batch(self, query_texts: List[str], k: int = 3, 
+                     similarity_threshold: float = 0.5) -> List[List[Dict]]:
+        """Analyze multiple query texts in batch.
+        
+        Args:
+            query_texts: List of query text strings
+            k: Number of similar notes to find per query
+            similarity_threshold: Minimum similarity threshold
+        
+        Returns:
+            List of connection lists, one per query
+        """
+        if not self.notes:
+            return []
+        
+        print(f"🔍 Analyzing {len(query_texts)} queries in batch...")
+        
+        # Embed all queries at once
+        query_embeddings = self.embedder.embed_texts(query_texts)
+        
+        all_results = []
+        for i, (query_text, query_emb) in enumerate(tqdm(zip(query_texts, query_embeddings), 
+                                                          total=len(query_texts), 
+                                                          desc="Processing queries")):
+            # Search for similar notes
+            D, I = self.index.search(
+                query_emb.reshape(1, -1).astype('float32'),
+                min(k, len(self.notes))
+            )
+            
+            connections = []
+            for idx, dist in zip(I[0], D[0]):
+                if idx < len(self.notes):
+                    similarity = 1 / (1 + dist)
+                    
+                    if similarity >= similarity_threshold:
+                        connections.append({
+                            'index': int(idx),
+                            'similarity': float(similarity),
+                            'note': self.notes[idx]
+                        })
+            
+            all_results.append(connections)
+        
+        return all_results

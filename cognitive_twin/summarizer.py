@@ -1,9 +1,27 @@
 """Text summarization module using BART with citation enforcement and optional NLI verification."""
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Union
 import re
 from transformers import BartForConditionalGeneration, BartTokenizer, AutoTokenizer, AutoModelForSequenceClassification
 import torch
+from dataclasses import dataclass
+
+@dataclass
+class CitationData:
+    """Structured citation data for clickable citations."""
+    text: str
+    full_text: str
+    index: Optional[int] = None
+    url: Optional[str] = None  # Web URL if available
+
+@dataclass
+class SummaryWithCitations:
+    """Structured summary with citation data."""
+    summary: str
+    citation1: CitationData
+    citation2: CitationData
+    grounded_score: Optional[float] = None
+    is_grounded: Optional[bool] = None
 
 class NoteSummarizer:
     def __init__(self, model_name: str = 'facebook/bart-large-cnn', nli_model: Optional[str] = 'facebook/bart-large-mnli'):
@@ -54,6 +72,12 @@ class NoteSummarizer:
             return text[:max_chars]
         best = max(sentences, key=len)[:max_chars]
         return best
+    
+    def _extract_urls(self, text: str) -> List[str]:
+        """Extract URLs from text."""
+        url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        urls = re.findall(url_pattern, text)
+        return urls
 
     def _nli_entailment(self, premise: str, hypothesis: str) -> float:
         if not self.nli_model or not self.nli_tokenizer:
@@ -65,10 +89,46 @@ class NoteSummarizer:
         # entailment index = 2 for MNLI family
         return float(probs[0, 2].item())
 
-    def summarize_with_citations(self, text1: str, text2: str, verify: bool = True) -> str:
+    def summarize_with_citations(self, text1: str, text2: str, verify: bool = True, 
+                                  note1_index: Optional[int] = None, 
+                                  note2_index: Optional[int] = None,
+                                  return_structured: bool = False) -> Union[str, SummaryWithCitations]:
+        """Summarize with citations. Returns structured data if return_structured=True."""
         summary = self.summarize_relationship(text1, text2)
         cite1 = self._extract_citation_spans(text1)
         cite2 = self._extract_citation_spans(text2)
+        
+        if return_structured:
+            # Extract URLs from texts
+            urls1 = self._extract_urls(text1)
+            urls2 = self._extract_urls(text2)
+            url1 = urls1[0] if urls1 else None
+            url2 = urls2[0] if urls2 else None
+            
+            citation1 = CitationData(text=cite1, full_text=text1, index=note1_index, url=url1)
+            citation2 = CitationData(text=cite2, full_text=text2, index=note2_index, url=url2)
+            
+            grounded_score = None
+            is_grounded = None
+            if verify:
+                sentences = re.split(r'(?<=[.!?])\s+', summary)
+                sentences = [s.strip() for s in sentences if s.strip()]
+                entail_scores = [
+                    max(self._nli_entailment(text1, s), self._nli_entailment(text2, s)) for s in sentences
+                ]
+                grounded = sum(1 for s in entail_scores if s >= 0.5)
+                total = max(1, len(entail_scores))
+                grounded_score = grounded / total
+                is_grounded = grounded_score >= 0.7
+            
+            return SummaryWithCitations(
+                summary=summary,
+                citation1=citation1,
+                citation2=citation2,
+                grounded_score=grounded_score,
+                is_grounded=is_grounded
+            )
+        
         footer = f"\n\nCitations:\n• Text 1: \"{cite1}\"\n• Text 2: \"{cite2}\""
         if verify:
             sentences = re.split(r'(?<=[.!?])\s+', summary)
